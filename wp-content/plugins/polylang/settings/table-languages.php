@@ -1,7 +1,10 @@
 <?php
+/**
+ * @package Polylang
+ */
 
 if ( ! class_exists( 'WP_List_Table' ) ) {
-	require_once( ABSPATH . 'wp-admin/includes/class-wp-list-table.php' ); // since WP 3.1
+	require_once ABSPATH . 'wp-admin/includes/class-wp-list-table.php'; // since WP 3.1
 }
 
 /**
@@ -17,19 +20,22 @@ class PLL_Table_Languages extends WP_List_Table {
 	 *
 	 * @since 0.1
 	 */
-	function __construct() {
-		parent::__construct( array(
-			'plural'   => 'Languages', // Do not translate ( used for css class )
-			'ajax'	   => false,
-		) );
+	public function __construct() {
+		parent::__construct(
+			array(
+				'plural' => 'Languages', // Do not translate ( used for css class )
+				'ajax'   => false,
+			)
+		);
 	}
 
 	/**
-	 * Generates content for a single row of the table
+	 * Generates content for a single row of the table.
 	 *
 	 * @since 1.8
 	 *
-	 * @param object $item The current item
+	 * @param PLL_Language $item The language item.
+	 * @return void
 	 */
 	public function single_row( $item ) {
 		/**
@@ -37,8 +43,8 @@ class PLL_Table_Languages extends WP_List_Table {
 		 *
 		 * @since 1.8
 		 *
-		 * @param array  $classes list of class names
-		 * @param object $item    the current item
+		 * @param array        $classes The list of class names.
+		 * @param PLL_Language $item    The language item.
 		 */
 		$classes = apply_filters( 'pll_languages_row_classes', array(), $item );
 		echo '<tr' . ( empty( $classes ) ? '>' : ' class="' . esc_attr( implode( ' ', $classes ) ) . '">' );
@@ -47,26 +53,28 @@ class PLL_Table_Languages extends WP_List_Table {
 	}
 
 	/**
-	 * Displays the item information in a column ( default case )
+	 * Displays the item information in a column ( default case ).
 	 *
 	 * @since 0.1
 	 *
-	 * @param object $item
-	 * @param string $column_name
-	 * @return string
+	 * @param PLL_Language $item        The language item.
+	 * @param string       $column_name The column name.
+	 * @return string|int
 	 */
-	function column_default( $item, $column_name ) {
+	public function column_default( $item, $column_name ) {
 		switch ( $column_name ) {
 			case 'locale':
 			case 'slug':
 				return esc_html( $item->$column_name );
 
 			case 'term_group':
-			case 'count':
 				return (int) $item->$column_name;
 
+			case 'count':
+				return $item->get_tax_prop( 'language', $column_name );
+
 			default:
-				return $item->$column_name; // flag
+				return $item->$column_name; // Flag.
 		}
 	}
 
@@ -76,14 +84,14 @@ class PLL_Table_Languages extends WP_List_Table {
 	 *
 	 * @since 0.1
 	 *
-	 * @param object $item
+	 * @param PLL_Language $item The language item.
 	 * @return string
 	 */
-	function column_name( $item ) {
+	public function column_name( $item ) {
 		return sprintf(
 			'<a title="%s" href="%s">%s</a>',
 			esc_attr__( 'Edit this language', 'polylang' ),
-			esc_url( admin_url( 'options-general.php?page=mlang&amp;pll_action=edit&amp;lang=' . $item->term_id ) ),
+			esc_url( admin_url( 'admin.php?page=mlang&amp;pll_action=edit&amp;lang=' . $item->term_id ) ),
 			esc_html( $item->name )
 		);
 	}
@@ -94,15 +102,13 @@ class PLL_Table_Languages extends WP_List_Table {
 	 *
 	 * @since 1.8
 	 *
-	 * @param object $item
+	 * @param PLL_Language $item The language item.
 	 * @return string
 	 */
-	function column_default_lang( $item ) {
-		$options = get_option( 'polylang' );
-
-		if ( $options['default_lang'] != $item->slug ) {
-			$s = sprintf('
-				<div class="row-actions"><span class="default-lang">
+	public function column_default_lang( $item ) {
+		if ( ! $item->is_default ) {
+			$s = sprintf(
+				'<div class="row-actions"><span class="default-lang">
 				<a class="icon-default-lang" title="%1$s" href="%2$s"><span class="screen-reader-text">%3$s</span></a>
 				</span></div>',
 				esc_attr__( 'Select as default language', 'polylang' ),
@@ -112,12 +118,12 @@ class PLL_Table_Languages extends WP_List_Table {
 			);
 
 			/**
-			 * Filter the default language row action in the languages list table
+			 * Filters the default language row action in the languages list table.
 			 *
 			 * @since 1.8
 			 *
-			 * @param string $s    html markup of the action
-			 * @param object $item
+			 * @param string       $s    The html markup of the action.
+			 * @param PLL_Language $item The language item.
 			 */
 			$s = apply_filters( 'pll_default_lang_row_action', $s, $item );
 		} else {
@@ -126,7 +132,6 @@ class PLL_Table_Languages extends WP_List_Table {
 				/* translators: accessibility text */
 				esc_html__( 'Default language', 'polylang' )
 			);
-			$actions = array();
 		}
 
 		return $s;
@@ -137,9 +142,9 @@ class PLL_Table_Languages extends WP_List_Table {
 	 *
 	 * @since 0.1
 	 *
-	 * @return array the list of column titles
+	 * @return string[] The list of column titles.
 	 */
-	function get_columns() {
+	public function get_columns() {
 		return array(
 			'name'         => esc_html__( 'Full name', 'polylang' ),
 			'locale'       => esc_html__( 'Locale', 'polylang' ),
@@ -158,14 +163,25 @@ class PLL_Table_Languages extends WP_List_Table {
 	 *
 	 * @return array
 	 */
-	function get_sortable_columns() {
+	public function get_sortable_columns() {
 		return array(
-			'name'		    => array( 'name', true ), // sorted by name by default
-			'locale'      => array( 'locale', false ),
-			'slug'		    => array( 'slug', false ),
-			'term_group'  => array( 'term_group', false ),
-			'count'	      => array( 'count', false ),
+			'name'       => array( 'name', true ), // sorted by name by default
+			'locale'     => array( 'locale', false ),
+			'slug'       => array( 'slug', false ),
+			'term_group' => array( 'term_group', false ),
+			'count'      => array( 'count', false ),
 		);
+	}
+
+	/**
+	 * Gets the name of the default primary column.
+	 *
+	 * @since 2.1
+	 *
+	 * @return string Name of the default primary column, in this case, 'name'.
+	 */
+	protected function get_default_primary_column_name() {
+		return 'name';
 	}
 
 	/**
@@ -173,9 +189,9 @@ class PLL_Table_Languages extends WP_List_Table {
 	 *
 	 * @since 1.8
 	 *
-	 * @param object $item        The item being acted upon.
-	 * @param string $column_name Current column name.
-	 * @param string $primary     Primary column name.
+	 * @param PLL_Language $item        The language item being acted upon.
+	 * @param string       $column_name Current column name.
+	 * @param string       $primary     Primary column name.
 	 * @return string The row actions output.
 	 */
 	protected function handle_row_actions( $item, $column_name, $primary ) {
@@ -187,25 +203,25 @@ class PLL_Table_Languages extends WP_List_Table {
 			'edit'   => sprintf(
 				'<a title="%s" href="%s">%s</a>',
 				esc_attr__( 'Edit this language', 'polylang' ),
-				esc_url( admin_url( 'options-general.php?page=mlang&amp;pll_action=edit&amp;lang=' . $item->term_id ) ),
-				esc_html__( 'Edit','polylang' )
+				esc_url( admin_url( 'admin.php?page=mlang&amp;pll_action=edit&amp;lang=' . $item->term_id ) ),
+				esc_html__( 'Edit', 'polylang' )
 			),
 			'delete' => sprintf(
 				'<a title="%s" href="%s" onclick = "return confirm( \'%s\' );">%s</a>',
 				esc_attr__( 'Delete this language and all its associated data', 'polylang' ),
 				wp_nonce_url( '?page=mlang&amp;pll_action=delete&amp;noheader=true&amp;lang=' . $item->term_id, 'delete-lang' ),
 				esc_js( __( 'You are about to permanently delete this language. Are you sure?', 'polylang' ) ),
-				esc_html__( 'Delete','polylang' )
+				esc_html__( 'Delete', 'polylang' )
 			),
 		);
 
 		/**
-		 * Filter the list of row actions in the languages list table
+		 * Filters the list of row actions in the languages list table.
 		 *
 		 * @since 1.8
 		 *
-		 * @param array  $actions list of html markup actions
-		 * @param object $item
+		 * @param array        $actions A list of html markup actions.
+		 * @param PLL_Language $item    The language item.
 		 */
 		$actions = apply_filters( 'pll_languages_row_actions', $actions, $item );
 
@@ -213,34 +229,35 @@ class PLL_Table_Languages extends WP_List_Table {
 	}
 
 	/**
-	 * Sort items
+	 * Sorts language items.
 	 *
 	 * @since 0.1
 	 *
-	 * @param object $a The first object to compare
-	 * @param object $b The second object to compare
+	 * @param PLL_Language $a The first language to compare.
+	 * @param PLL_Language $b The second language to compare.
 	 * @return int -1 or 1 if $a is considered to be respectively less than or greater than $b.
 	 */
 	protected function usort_reorder( $a, $b ) {
-		$orderby = ! empty( $_GET['orderby'] ) ? $_GET['orderby'] : 'name';
+		$orderby = ! empty( $_GET['orderby'] ) ? sanitize_key( $_GET['orderby'] ) : 'name'; // phpcs:ignore WordPress.Security.NonceVerification
 		// Determine sort order
 		if ( is_numeric( $a->$orderby ) ) {
 			$result = $a->$orderby > $b->$orderby ? 1 : -1;
 		} else {
 			$result = strcmp( $a->$orderby, $b->$orderby );
 		}
-		// Send final sort direction to usort
-		return ( empty( $_GET['order'] ) || 'asc' == $_GET['order'] ) ? $result : -$result;
+		// Send final sort direction to usort.
+		return ( empty( $_GET['order'] ) || 'asc' === $_GET['order'] ) ? $result : -$result; // phpcs:ignore WordPress.Security.NonceVerification
 	}
 
 	/**
-	 * Prepares the list of items for displaying
+	 * Prepares the list of languages for display.
 	 *
 	 * @since 0.1
 	 *
-	 * @param array $data
+	 * @param PLL_Language[] $data The list of languages.
+	 * @return void
 	 */
-	function prepare_items( $data = array() ) {
+	public function prepare_items( $data = array() ) {
 		$per_page = $this->get_items_per_page( 'pll_lang_per_page' );
 		$this->_column_headers = array( $this->get_columns(), array(), $this->get_sortable_columns() );
 
@@ -249,10 +266,12 @@ class PLL_Table_Languages extends WP_List_Table {
 		$total_items = count( $data );
 		$this->items = array_slice( $data, ( $this->get_pagenum() - 1 ) * $per_page, $per_page );
 
-		$this->set_pagination_args( array(
-			'total_items' => $total_items,
-			'per_page'	=> $per_page,
-			'total_pages' => ceil( $total_items / $per_page ),
-		) );
+		$this->set_pagination_args(
+			array(
+				'total_items' => $total_items,
+				'per_page'    => $per_page,
+				'total_pages' => (int) ceil( $total_items / $per_page ),
+			)
+		);
 	}
 }

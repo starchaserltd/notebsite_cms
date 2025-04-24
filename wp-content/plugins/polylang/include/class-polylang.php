@@ -1,133 +1,157 @@
 <?php
+/**
+ * @package Polylang
+ */
 
 if ( ! defined( 'ABSPATH' ) ) {
-	exit; // don't access directly
-};
+	exit; // Don't access directly
+}
 
-// default directory to store user data such as custom flags
+// Default directory to store user data such as custom flags
 if ( ! defined( 'PLL_LOCAL_DIR' ) ) {
 	define( 'PLL_LOCAL_DIR', WP_CONTENT_DIR . '/polylang' );
 }
 
-// includes local config file if exists
-if ( file_exists( PLL_LOCAL_DIR . '/pll-config.php' ) ) {
-	include_once( PLL_LOCAL_DIR . '/pll-config.php' );
+// Includes local config file if exists
+if ( is_readable( PLL_LOCAL_DIR . '/pll-config.php' ) ) {
+	include_once PLL_LOCAL_DIR . '/pll-config.php';
 }
 
 /**
- * controls the plugin, as well as activation, and deactivation
+ * Controls the plugin, as well as activation, and deactivation
  *
  * @since 0.1
+ *
+ * @template TPLLClass of PLL_Base
  */
 class Polylang {
 
 	/**
-	 * constructor
+	 * Constructor
 	 *
 	 * @since 0.1
 	 */
 	public function __construct() {
-		require_once( PLL_INC . '/functions-wpcom-vip.php' ); // VIP functions
-		spl_autoload_register( array( $this, 'autoload' ) ); // autoload classes
+		require_once __DIR__ . '/functions.php'; // VIP functions
+
+		// register an action when plugin is activating.
+		register_activation_hook( POLYLANG_BASENAME, array( 'PLL_Wizard', 'start_wizard' ) );
 
 		$install = new PLL_Install( POLYLANG_BASENAME );
 
-		// stopping here if we are going to deactivate the plugin ( avoids breaking rewrite rules )
-		if ( $install->is_deactivation() ) {
+		// Stopping here if we are going to deactivate the plugin ( avoids breaking rewrite rules )
+		if ( $install->is_deactivation() || ! $install->can_activate() ) {
 			return;
 		}
 
-		// plugin initialization
-		// take no action before all plugins are loaded
+		// Plugin initialization
+		// Take no action before all plugins are loaded
 		add_action( 'plugins_loaded', array( $this, 'init' ), 1 );
 
-		// override load text domain waiting for the language to be defined
-		// here for plugins which load text domain as soon as loaded :(
+		// Override load text domain waiting for the language to be defined
+		// Here for plugins which load text domain as soon as loaded :(
 		if ( ! defined( 'PLL_OLT' ) || PLL_OLT ) {
 			PLL_OLT_Manager::instance();
 		}
 
-		// extra code for compatibility with some plugins
-		// loaded as soon as possible as we may need to act before other plugins are loaded
+		/*
+		 * Loads the compatibility with some plugins and themes.
+		 * Loaded as soon as possible as we may need to act before other plugins are loaded.
+		 */
 		if ( ! defined( 'PLL_PLUGINS_COMPAT' ) || PLL_PLUGINS_COMPAT ) {
-			PLL_Plugins_Compat::instance();
+			PLL_Integrations::instance();
 		}
 	}
 
 	/**
-	 * autoload classes
+	 * Tells whether the current request is an ajax request on frontend or not
 	 *
-	 * @since 1.2
+	 * @since 2.2
 	 *
-	 * @param string $class
+	 * @return bool
 	 */
-	public function autoload( $class ) {
-		// not a Polylang class
-		if ( 0 !== strncmp( 'PLL_', $class, 4 ) ) {
-			return;
-		}
+	public static function is_ajax_on_front() {
+		// Special test for plupload which does not use jquery ajax and thus does not pass our ajax prefilter
+		// Special test for customize_save done in frontend but for which we want to load the admin
+		$in = isset( $_REQUEST['action'] ) && in_array( sanitize_key( $_REQUEST['action'] ), array( 'upload-attachment', 'customize_save' ) ); // phpcs:ignore WordPress.Security.NonceVerification
+		$is_ajax_on_front = wp_doing_ajax() && empty( $_REQUEST['pll_ajax_backend'] ) && ! $in; // phpcs:ignore WordPress.Security.NonceVerification
 
-		$class = str_replace( '_', '-', strtolower( substr( $class, 4 ) ) );
-		$to_find = array( 'media', 'share', 'slug', 'slugs', 'sync', 'translate', 'wpml', 'xdata' );
-		$dir = implode( '-', array_intersect( explode( '-', $class ), $to_find ) );
-
-		$dirs = array(
-			PLL_FRONT_INC,
-			PLL_MODULES_INC,
-			PLL_MODULES_INC . "/$dir",
-			PLL_MODULES_INC . '/plugins',
-			PLL_INSTALL_INC,
-			PLL_ADMIN_INC,
-			PLL_SETTINGS_INC,
-			PLL_INC,
-		);
-
-		foreach ( $dirs as $dir ) {
-			if ( file_exists( $file = "$dir/$class.php" ) ) {
-				require_once( $file );
-				return;
-			}
-		}
+		/**
+		 * Filters whether the current request is an ajax request on front.
+		 *
+		 * @since 2.3
+		 *
+		 * @param bool $is_ajax_on_front Whether the current request is an ajax request on front.
+		 */
+		return apply_filters( 'pll_is_ajax_on_front', $is_ajax_on_front );
 	}
 
 	/**
-	 * defines constants
-	 * may be overriden by a plugin if set before plugins_loaded, 1
+	 * Is the current request a REST API request?
+	 * Inspired by WP::parse_request()
+	 * Needed because at this point, the constant REST_REQUEST is not defined yet
+	 *
+	 * @since 2.4.1
+	 *
+	 * @return bool
+	 */
+	public static function is_rest_request() {
+		// Handle pretty permalinks.
+		$home_path       = trim( (string) wp_parse_url( home_url(), PHP_URL_PATH ), '/' );
+		$home_path_regex = sprintf( '|^%s|i', preg_quote( $home_path, '|' ) );
+
+		$req_uri = trim( (string) wp_parse_url( pll_get_requested_url(), PHP_URL_PATH ), '/' );
+		$req_uri = (string) preg_replace( $home_path_regex, '', $req_uri );
+		$req_uri = trim( $req_uri, '/' );
+		$req_uri = str_replace( 'index.php', '', $req_uri );
+		$req_uri = trim( $req_uri, '/' );
+
+		// And also test rest_route query string parameter is not empty for plain permalinks.
+		$query_string = array();
+		wp_parse_str( (string) wp_parse_url( pll_get_requested_url(), PHP_URL_QUERY ), $query_string );
+		$rest_route = isset( $query_string['rest_route'] ) ? trim( $query_string['rest_route'], '/' ) : false;
+
+		return 0 === strpos( $req_uri, rest_get_url_prefix() . '/' ) || ! empty( $rest_route );
+	}
+
+	/**
+	 * Tells if we are in the wizard process.
+	 *
+	 * @since 2.7
+	 *
+	 * @return bool
+	 */
+	public static function is_wizard() {
+		return isset( $_GET['page'] ) && ! empty( $_GET['page'] ) && 'mlang_wizard' === sanitize_key( $_GET['page'] ); // phpcs:ignore WordPress.Security.NonceVerification
+	}
+
+	/**
+	 * Defines constants
+	 * May be overridden by a plugin if set before plugins_loaded, 1
 	 *
 	 * @since 1.6
+	 *
+	 * @return void
 	 */
-	static public function define_constants() {
-		// our url. Don't use WP_PLUGIN_URL http://wordpress.org/support/topic/ssl-doesnt-work-properly
-		if ( ! defined( 'POLYLANG_URL' ) ) {
-			define( 'POLYLANG_URL', plugins_url( '', POLYLANG_FILE ) );
-		}
-
-		// default url to access user data such as custom flags
-		if ( ! defined( 'PLL_LOCAL_URL' ) ) {
-			define( 'PLL_LOCAL_URL', content_url( '/polylang' ) );
-		}
-
-		// cookie name. no cookie will be used if set to false
+	public static function define_constants() {
+		// Cookie name. no cookie will be used if set to false
 		if ( ! defined( 'PLL_COOKIE' ) ) {
 			define( 'PLL_COOKIE', 'pll_language' );
 		}
 
-		// avoid loading polylang admin for frontend ajax requests
-		// special test for plupload which does not use jquery ajax and thus does not pass our ajax prefilter
-		// special test for customize_save done in frontend but for which we want to load the admin
+		// Backward compatibility with Polylang < 2.3
 		if ( ! defined( 'PLL_AJAX_ON_FRONT' ) ) {
-			$in = isset( $_REQUEST['action'] ) && in_array( $_REQUEST['action'], array( 'upload-attachment', 'customize_save' ) );
-			define( 'PLL_AJAX_ON_FRONT', defined( 'DOING_AJAX' ) && DOING_AJAX && empty( $_REQUEST['pll_ajax_backend'] ) && ! $in );
+			define( 'PLL_AJAX_ON_FRONT', self::is_ajax_on_front() );
 		}
 
-		// admin
+		// Admin
 		if ( ! defined( 'PLL_ADMIN' ) ) {
-			define( 'PLL_ADMIN', defined( 'DOING_CRON' ) || ( is_admin() && ! PLL_AJAX_ON_FRONT ) );
+			define( 'PLL_ADMIN', wp_doing_cron() || ( defined( 'WP_CLI' ) && WP_CLI ) || ( is_admin() && ! PLL_AJAX_ON_FRONT ) );
 		}
 
-		// settings page whatever the tab
+		// Settings page whatever the tab except for the wizard which needs to be an admin process.
 		if ( ! defined( 'PLL_SETTINGS' ) ) {
-			define( 'PLL_SETTINGS', is_admin() && ( ( isset( $_GET['page'] ) && 'mlang' == $_GET['page'] ) || ! empty( $_REQUEST['pll_ajax_settings'] ) ) );
+			define( 'PLL_SETTINGS', is_admin() && ( ( isset( $_GET['page'] ) && 0 === strpos( sanitize_key( $_GET['page'] ), 'mlang' ) && ! self::is_wizard() ) || ! empty( $_REQUEST['pll_ajax_settings'] ) ) ); // phpcs:ignore WordPress.Security.NonceVerification
 		}
 	}
 
@@ -136,23 +160,25 @@ class Polylang {
 	 * setups models and separate admin and frontend
 	 *
 	 * @since 1.2
+	 *
+	 * @return void
 	 */
 	public function init() {
-		global $polylang;
-
 		self::define_constants();
 		$options = get_option( 'polylang' );
 
-		// plugin upgrade
+		// Plugin upgrade
 		if ( $options && version_compare( $options['version'], POLYLANG_VERSION, '<' ) ) {
 			$upgrade = new PLL_Upgrade( $options );
-			if ( ! $upgrade->upgrade() ) { // if the version is too old
+			if ( ! $upgrade->upgrade() ) { // If the version is too old
 				return;
 			}
 		}
 
-		// Make sure that this filter is *always* added before PLL_Model::get_languages_list() is called for the first time
-		add_filter( 'pll_languages_list', array( 'PLL_Static_Pages', 'pll_languages_list' ), 2, 2 ); // before PLL_Links_Model
+		// In some edge cases, it's possible that no options were found in the database. Load default options as we need some.
+		if ( ! $options ) {
+			$options = PLL_Install::get_default_options();
+		}
 
 		/**
 		 * Filter the model class to use
@@ -162,60 +188,111 @@ class Polylang {
 		 *
 		 * @param string $class either PLL_Model or PLL_Admin_Model
 		 */
-		$class = apply_filters( 'pll_model', PLL_SETTINGS ? 'PLL_Admin_Model' : 'PLL_Model' );
+		$class = apply_filters( 'pll_model', PLL_SETTINGS || self::is_wizard() ? 'PLL_Admin_Model' : 'PLL_Model' );
+		/** @var PLL_Model $model */
 		$model = new $class( $options );
-		$links_model = $model->get_links_model();
 
-		if ( PLL_SETTINGS ) {
-			$polylang = new PLL_Settings( $links_model );
-		}
-		elseif ( PLL_ADMIN ) {
-			$polylang = new PLL_Admin( $links_model );
-		}
-		// do nothing on frontend if no language is defined
-		elseif ( $model->get_languages_list() && empty( $_GET['deactivate-polylang'] ) ) {
-			$polylang = new PLL_Frontend( $links_model );
-		}
-
-		if ( ! $model->get_languages_list() ) {
+		if ( ! $model->has_languages() ) {
 			/**
 			 * Fires when no language has been defined yet
-			 * Used to load overriden textdomains
+			 * Used to load overridden textdomains
 			 *
 			 * @since 1.2
 			 */
 			do_action( 'pll_no_language_defined' );
 		}
 
-		if ( ! empty( $polylang ) ) {
-			/**
-			 * Fires after the $polylang object is created and before the API is loaded
-			 *
-			 * @since 2.0
-			 *
-			 * @param object $polylang
-			 */
-			do_action_ref_array( 'pll_pre_init', array( &$polylang ) );
+		$class = '';
 
-			require_once( PLL_INC.'/api.php' ); // loads the API
+		if ( PLL_SETTINGS ) {
+			$class = 'PLL_Settings';
+		} elseif ( PLL_ADMIN ) {
+			$class = 'PLL_Admin';
+		} elseif ( self::is_rest_request() ) {
+			$class = 'PLL_REST_Request';
+		} elseif ( $model->has_languages() ) {
+			$class = 'PLL_Frontend';
+		}
 
-			if ( ! defined( 'PLL_WPML_COMPAT' ) || PLL_WPML_COMPAT ) {
-				PLL_WPML_Compat::instance(); // WPML API
-				PLL_WPML_Config::instance(); // wpml-config.xml
-			}
+		/**
+		 * Filters the class to use to instantiate the $polylang object
+		 *
+		 * @since 2.6
+		 *
+		 * @param string $class A class name.
+		 */
+		$class = apply_filters( 'pll_context', $class );
 
-			$polylang->init();
-
-			/**
-			 * Fires after the $polylang object and the API is loaded
-			 *
-			 * @since 1.7
-			 *
-			 * @param object $polylang
-			 */
-			do_action_ref_array( 'pll_init', array( &$polylang ) );
+		if ( ! empty( $class ) ) {
+			/** @phpstan-var class-string<TPLLClass> $class */
+			$this->init_context( $class, $model );
 		}
 	}
-}
 
-new Polylang();
+	/**
+	 * Polylang initialization.
+	 * Setups the Polylang Context, loads the modules and init Polylang.
+	 *
+	 * @since 3.6
+	 *
+	 * @param string    $class The class name.
+	 * @param PLL_Model $model Instance of PLL_Model.
+	 * @return PLL_Base
+	 *
+	 * @phpstan-param class-string<TPLLClass> $class
+	 * @phpstan-return TPLLClass
+	 */
+	public function init_context( string $class, PLL_Model $model ): PLL_Base {
+		global $polylang;
+
+		$links_model = $model->get_links_model();
+		$polylang    = new $class( $links_model );
+
+		/**
+		 * Fires after Polylang's model init.
+		 * This is the best place to register a custom table (see `PLL_Model`'s constructor).
+		 * /!\ This hook is fired *before* the $polylang object is available.
+		 * /!\ The languages are also not available yet.
+		 *
+		 * @since 3.4
+		 *
+		 * @param PLL_Model $model Polylang model.
+		 */
+		do_action( 'pll_model_init', $model );
+
+		$model->maybe_create_language_terms();
+
+		/**
+		 * Fires after the $polylang object is created and before the API is loaded
+		 *
+		 * @since 2.0
+		 *
+		 * @param object $polylang
+		 */
+		do_action_ref_array( 'pll_pre_init', array( &$polylang ) );
+
+		// Loads the API
+		require_once POLYLANG_DIR . '/include/api.php';
+
+		// Loads the modules.
+		$load_scripts = glob( POLYLANG_DIR . '/modules/*/load.php', GLOB_NOSORT );
+		if ( is_array( $load_scripts ) ) {
+			foreach ( $load_scripts as $load_script ) {
+				require_once $load_script; // phpcs:ignore WordPressVIPMinimum.Files.IncludingFile.UsingVariable
+			}
+		}
+
+		$polylang->init();
+
+		/**
+		 * Fires after the $polylang object and the API is loaded
+		 *
+		 * @since 1.7
+		 *
+		 * @param object $polylang
+		 */
+		do_action_ref_array( 'pll_init', array( &$polylang ) );
+
+		return $polylang;
+	}
+}
